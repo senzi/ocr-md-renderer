@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ocrmac</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .upload-container {
+            border: 2px dashed #666;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            background-color: white;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+        }
+
+        .upload-container.dragover {
+            background-color: #e3f2fd;
+            border-color: #2196f3;
+        }
+
+        .preview-container {
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .preview-image {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .btn {
+            background-color: #2196f3;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            vertical-align: middle;
+            height: 40px;
+        }
+
+        .btn:hover {
+            background-color: #1976d2;
+        }
+
+        .btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .results-card {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .result-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .selected {
+            background-color: #e3f2fd;
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background-color: #4caf50;
+            color: white;
+            border-radius: 5px;
+            display: none;
+            animation: fadeIn 0.3s, fadeOut 0.3s 1.7s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+
+        #file-input {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>ocrmac</h1>
+    
+    <div class="upload-container" id="drop-zone">
+        <p>拖拽图片到这里或点击上传</p>
+        <input type="file" id="file-input" accept=".png,.jpg,.jpeg">
+        <button class="btn" onclick="document.getElementById('file-input').click()">选择文件</button>
+    </div>
+
+    <div class="preview-container" style="display: none;">
+        <img id="preview-image" class="preview-image">
+        <div style="margin-top: 20px;">
+            <button class="btn" id="ocr-button" onclick="performOCR()">开始识别</button>
+            <button class="btn" onclick="resetUpload()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 11-9-9 9 9 0 019 9z"></path>
+                    <path d="M9 12l2 2 4-4"></path>
+                </svg>
+                重新上传
+            </button>
+        </div>
+    </div>
+
+    <div class="results-card" id="results-container" style="display: none;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>识别结果：</h2>
+            <button class="btn" onclick="copyResults()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"></path>
+                </svg>
+                复制
+            </button>
+        </div>
+        <div id="results-list"></div>
+    </div>
+
+    <div id="toast" class="toast">复制成功！</div>
+
+    <script>
+        let currentFile = null;
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const previewContainer = document.querySelector('.preview-container');
+        const previewImage = document.getElementById('preview-image');
+        const resultsContainer = document.getElementById('results-container');
+        const resultsList = document.getElementById('results-list');
+
+        // 拖拽事件处理
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                alert('请上传图片文件');
+                return;
+            }
+
+            currentFile = file;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                previewImage.src = e.target.result;
+                previewContainer.style.display = 'block';
+                resultsContainer.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+
+            // 上传文件到服务器
+            const formData = new FormData();
+            formData.append('file', file);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                }
+                currentFile = data.filename;
+                // 上传成功后隐藏上传区域
+                dropZone.style.display = 'none';
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('上传失败');
+            });
+        }
+
+        function performOCR() {
+            if (!currentFile) {
+                alert('请先上传图片');
+                return;
+            }
+
+            fetch('/ocr', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({filename: currentFile})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert(data.error);
+                    return;
+                }
+                
+                resultsContainer.style.display = 'block';
+                resultsList.innerHTML = '';
+                data.results.forEach(text => {
+                    const div = document.createElement('div');
+                    div.className = 'result-item';
+                    div.textContent = text;
+                    div.onclick = function() {
+                        this.classList.toggle('selected');
+                    };
+                    resultsList.appendChild(div);
+                });
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('识别失败');
+            });
+        }
+
+        function resetUpload() {
+            currentFile = null;
+            previewContainer.style.display = 'none';
+            resultsContainer.style.display = 'none';
+            dropZone.style.display = 'block';
+            fileInput.value = '';
+        }
+
+        function copyResults() {
+            const selectedItems = document.querySelectorAll('.result-item.selected');
+            let textToCopy;
+            
+            if (selectedItems.length > 0) {
+                textToCopy = Array.from(selectedItems).map(item => item.textContent).join('\n');
+            } else {
+                textToCopy = Array.from(document.querySelectorAll('.result-item')).map(item => item.textContent).join('\n');
+            }
+
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                const toast = document.getElementById('toast');
+                toast.style.display = 'block';
+                setTimeout(() => {
+                    toast.style.display = 'none';
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
